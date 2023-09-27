@@ -6,92 +6,107 @@ UFV - 2023. */
 #include <thread>
 #include <vector>
 #include <mutex>
-#include <condition_variable>
+#include <map>
+#include <queue>
+
 using namespace std;
 
 const int numProcessForEachType = 5;
 const int numPrinterForEachType = 2;
-bool processAOk = false;
-bool processBOk = false;
+map<thread::id,int> A;
+queue<thread::id> bloqueadas;
+mutex globalMux;
 
+void wakeup(thread::id t);
+
+void block();
 
 class Printer{
 private:
     string printerType;
     int numPrintersAvaliable;
     bool isAvaliable = false;
-    condition_variable condition;
-    mutex m1x;
 
     public:
     Printer(const string &printerType, int numPrintersAvaliable) : printerType(printerType), numPrintersAvaliable(numPrintersAvaliable), isAvaliable(true) {}
-
+    
     bool requirePrinter(){
-        unique_lock<mutex> lock(m1x);
-        condition.wait(lock, [this] { return numPrintersAvaliable > 0; });
-
+        globalMux.lock();
         if(numPrintersAvaliable > 0){
-            --numPrintersAvaliable; //Usei pré-decremento com o receio de usar o pós, visto que quando uma thread tentasse acessar antes da diminuição do valor, pudesse gerar algum conflito.
+            if(bloqueadas.size() > 0){
+                thread::id blockedThread = bloqueadas.front();
+                wakeup(blockedThread);
+                bloqueadas.pop();
+            }
+            numPrintersAvaliable--;
             return true;
         }
 
+        else{
+            isAvaliable = false;
+            bloqueadas.push(this_thread::get_id());
+            block();
+        }
+
         return false;
+        globalMux.unlock();
     };
 
     void freePrinter(){
-        unique_lock<mutex> lock(m1x);
+        globalMux.lock();
         ++numPrintersAvaliable;
         isAvaliable = true;
-        condition.notify_all(); // Notifique uma thread em espera que a impressora está disponível
-
+        globalMux.lock();
     };
 };
 
+void wakeup(thread::id t) {
+    globalMux.lock();
+    A[t]++;
+    globalMux.unlock();
+}
+
+void block() {
+    bool sair = false;
+    thread::id eu = this_thread::get_id();
+    do {
+        globalMux.lock();
+        if(A[eu] > 0) {
+        A[eu]--;
+        sair = true;
+        }
+        globalMux.unlock();
+    } while (!sair); 
+}
 
 void processA(Printer &laserPrinter){
-// Processos do tipo A podem usar apenas impressoras Laser. 
-    while (true) {
-        if (laserPrinter.requirePrinter()) {
+    bool processAOk = false;
+    while(!processAOk){
+        if(laserPrinter.requirePrinter()){
             printf("Processo A está utilizando a impressora a Laser.\n");
-            this_thread::sleep_for(chrono::milliseconds(1));
+            this_thread::sleep_for(std::chrono::milliseconds(1));
             laserPrinter.freePrinter();
-            printf("Impressora a laser liberada pelo processo A.\n");
-            break;
+            printf("Processo A liberou a impressora a Laser.\n");
+            processAOk = true;
         }
     }
 }
 
 void processB(Printer &jetPrinter){
-// Processos do tipo B podem usar apenas impressoras Jato de Tinta. 
-    while (true) {
-        if (jetPrinter.requirePrinter()) {
-            printf("Processo B está utilizando a impressora a Laser.\n");
-            this_thread::sleep_for(chrono::milliseconds(1));
+    bool processBOk = false;
+    while(!processBOk){
+        if(jetPrinter.requirePrinter()){
+            printf("Processo B está utilizando a impressora a Jato.\n");
+            this_thread::sleep_for(std::chrono::milliseconds(600));
             jetPrinter.freePrinter();
-            printf("Impressora a laser liberada pelo processo B.\n");
-            break;
+            printf("Processo B liberou a impressora a Jato.\n");
+            processBOk = true;
         }
     }
 }
 
 void processC(Printer &laserPrinter, Printer &jetPrinters){
-// Processos do tipo C podem usar qualquer tipo de impressora, com preferência para impressoras Laser, quando existem os dois tipos de impressora disponíveis.
-    while (true) {
-        if (jetPrinters.requirePrinter()) {
-            printf("Processo C está utilizando a impressora a Jato.\n");
-            this_thread::sleep_for(chrono::milliseconds(1));
-            jetPrinters.freePrinter();
-            printf("Impressora a Jato liberada pelo processo C.\n");
-            break;
-        }
-        else if(laserPrinter.requirePrinter()){
-            printf("Processo C está utilizando a impressora a Jato.\n");
-            this_thread::sleep_for(chrono::milliseconds(1));
-            laserPrinter.freePrinter();
-            printf("Impressora a laser liberada pelo processo C..\n");
-            break;
-        }
-    }
+    printf("Not implemented.\n");
 }
 
 int main(){
@@ -103,19 +118,21 @@ int main(){
     vector<thread> processThreadsC(numProcessForEachType);
 
     //Criação de 5 processos para cada tipo - 5A, 5B E 5C.
-    for (int i = 0; i < numProcessForEachType; ++i) {
-        processThreadsA[i] = thread([&laserPrinters](){
-            processA(laserPrinters);
-        });
-        processThreadsB[i] = thread([&jetPrinters](){
-            processB(jetPrinters);
-        });
-        processThreadsC[i] = thread([&jetPrinters, &laserPrinters](){
-            processC(laserPrinters, jetPrinters);
-        });        
+    for (int i = 0; i < numProcessForEachType; i++) {
+        thread tA(processA, ref(laserPrinters));
+        A[tA.get_id()] = 0;
+        processThreadsA.push_back(move(tA));
+   
+        thread tB(processB, ref(jetPrinters));
+        A[tB.get_id()] = 0;
+        processThreadsB.push_back(move(tB));
+    
+        thread tC(processC, ref(laserPrinters), ref(jetPrinters));
+        A[tC.get_id()] = 0;
+        processThreadsC.push_back(move(tC));
     }
 
-    for (int i = 0; i < numProcessForEachType; ++i) {
+    for (int i = 0; i < numProcessForEachType; i++) {
         processThreadsA[i].join();
         processThreadsB[i].join();
         processThreadsC[i].join();
