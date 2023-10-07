@@ -15,7 +15,8 @@ const int numProcessForEachType = 5;
 const int numPrinterForEachType = 2;
 map<thread::id,int> A;
 queue<thread::id> bloqueadas;
-mutex globalMux;
+mutex mux;
+mutex printerMux;
 
 void wakeup(thread::id t);
 
@@ -30,92 +31,87 @@ private:
     public:
     Printer(const string &printerType, int numPrintersAvaliable) : printerType(printerType), numPrintersAvaliable(numPrintersAvaliable), isAvaliable(true) {}
     
-    bool requirePrinter(){
-        globalMux.lock();
-        if(numPrintersAvaliable > 0){
-            if(bloqueadas.size() > 0){
-                thread::id blockedThread = bloqueadas.front();
-                wakeup(blockedThread);
-                bloqueadas.pop();
-            }
+    bool requirePrinter(bool processCondition, char tag, Printer printerType){
+        unique_lock<mutex> lock(printerMux);
+        if(numPrintersAvaliable > 0 && processCondition != true){
+            cout << "Processo " << tag << " está utilizando a impressora\n.";
             numPrintersAvaliable--;
+            this_thread::sleep_for(std::chrono::milliseconds(600));
+            printerType.freePrinter();
+            cout << "Processo " << tag << " liberou a impressora\n.";
+            processCondition = true;
             return true;
         }
 
         else{
+            cout << "Não há impressoras disponíveis." << endl;
             isAvaliable = false;
             bloqueadas.push(this_thread::get_id());
             block();
         }
 
         return false;
-        globalMux.unlock();
     };
 
     void freePrinter(){
-        globalMux.lock();
+        printerMux.lock();
+        if(bloqueadas.size() > 0){
+            thread::id blockedThread = bloqueadas.front();
+            wakeup(blockedThread);
+            bloqueadas.pop();
+        }
+        unique_lock<mutex> lock(printerMux);
         ++numPrintersAvaliable;
         isAvaliable = true;
-        globalMux.lock();
-    };
+        printerMux.unlock();
+    }   
 };
 
 void wakeup(thread::id t) {
-    globalMux.lock();
+    mux.lock();
     A[t]++;
-    globalMux.unlock();
+    mux.unlock();
 }
 
 void block() {
     bool sair = false;
     thread::id eu = this_thread::get_id();
     do {
-        globalMux.lock();
+        mux.lock();
         if(A[eu] > 0) {
-        A[eu]--;
-        sair = true;
+            A[eu]--;
+            sair = true;
         }
-        globalMux.unlock();
+        mux.unlock();
     } while (!sair); 
 }
 
 void processA(Printer &laserPrinter){
     bool processAOk = false;
-    while(!processAOk){
-        if(laserPrinter.requirePrinter()){
-            printf("Processo A está utilizando a impressora a Laser.\n");
-            this_thread::sleep_for(std::chrono::milliseconds(1));
-            laserPrinter.freePrinter();
-            printf("Processo A liberou a impressora a Laser.\n");
-            processAOk = true;
-        }
-    }
+    char tag = 'A';
+    laserPrinter.requirePrinter(processAOk, tag, laserPrinter);
 }
 
 void processB(Printer &jetPrinter){
     bool processBOk = false;
-    while(!processBOk){
-        if(jetPrinter.requirePrinter()){
-            printf("Processo B está utilizando a impressora a Jato.\n");
-            this_thread::sleep_for(std::chrono::milliseconds(600));
-            jetPrinter.freePrinter();
-            printf("Processo B liberou a impressora a Jato.\n");
-            processBOk = true;
-        }
-    }
+    char tag = 'B';
+    jetPrinter.requirePrinter(processBOk, tag, jetPrinter);
 }
 
-void processC(Printer &laserPrinter, Printer &jetPrinters){
-    printf("Not implemented.\n");
+void processC(Printer &laserPrinter, Printer &jetPrinter){
+    bool processCOk = false;
+    char tag = 'C';
+    jetPrinter.requirePrinter(processCOk, tag, jetPrinter);
+    laserPrinter.requirePrinter(processCOk, tag, laserPrinter);
 }
 
 int main(){
     /*No sistema existem 2 impressoras de cada tipo e 5 processos de cada tipo.*/
     Printer laserPrinters("Laser", 2);
     Printer jetPrinters("Jet", 2);
-    vector<thread> processThreadsA(numProcessForEachType);
-    vector<thread> processThreadsB(numProcessForEachType);
-    vector<thread> processThreadsC(numProcessForEachType);
+    vector<thread> processThreadsA;
+    vector<thread> processThreadsB;
+    vector<thread> processThreadsC;
 
     //Criação de 5 processos para cada tipo - 5A, 5B E 5C.
     for (int i = 0; i < numProcessForEachType; i++) {
