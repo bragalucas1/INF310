@@ -32,24 +32,25 @@ private:
     Printer(const string &printerType, int numPrintersAvaliable) : printerType(printerType), numPrintersAvaliable(numPrintersAvaliable), isAvaliable(true) {}
     
     bool requirePrinter(bool processCondition, char tag, Printer printerType){
-        unique_lock<mutex> lock(printerMux);
-        if(numPrintersAvaliable > 0 && processCondition != true){
-            cout << "Processo " << tag << " está utilizando a impressora\n.";
-            numPrintersAvaliable--;
-            this_thread::sleep_for(std::chrono::milliseconds(600));
-            printerType.freePrinter();
-            cout << "Processo " << tag << " liberou a impressora\n.";
-            processCondition = true;
-            return true;
-        }
+        cout << "Tag: " << tag << " entrou.\n";
+        while(!processCondition){
+            if(numPrintersAvaliable > 0){
+                cout << "Processo " << tag << " está utilizando a impressora.\n";
+                numPrintersAvaliable--;
+                this_thread::sleep_for(std::chrono::milliseconds(1));
+                printerType.freePrinter();
+                cout << "Processo " << tag << " liberou a impressora.\n";
+                processCondition = true;
+                return true;
+            }
 
-        else{
-            cout << "Não há impressoras disponíveis." << endl;
-            isAvaliable = false;
-            bloqueadas.push(this_thread::get_id());
-            block();
+            else{
+                cout << "Não há impressoras disponíveis." << endl;
+                isAvaliable = false;
+                bloqueadas.push(this_thread::get_id());
+                block();
+            }
         }
-
         return false;
     };
 
@@ -60,7 +61,6 @@ private:
             wakeup(blockedThread);
             bloqueadas.pop();
         }
-        unique_lock<mutex> lock(printerMux);
         ++numPrintersAvaliable;
         isAvaliable = true;
         printerMux.unlock();
