@@ -37,7 +37,7 @@ private:
             if(numPrintersAvaliable > 0){
                 cout << "Processo " << tag << " está utilizando a impressora.\n";
                 numPrintersAvaliable--;
-                this_thread::sleep_for(std::chrono::milliseconds(1));
+                this_thread::sleep_for(std::chrono::milliseconds(180));
                 printerType.freePrinter();
                 cout << "Processo " << tag << " liberou a impressora.\n";
                 processCondition = true;
