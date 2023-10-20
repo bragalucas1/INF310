@@ -24,7 +24,7 @@ private:
     4) booleano a fim de verificar se o barbeiro esta ocioso ou não
     5) fila para colocar os que estão esperando o corte.*/
     mutex mux;
-    condition_variable isSleep;
+    condition_variable isBarberSleeping;
     int clientsWaiting;
     bool barberSleeping;
     queue<int> waitingToCut;
@@ -49,7 +49,7 @@ public:
 
         if (!waitingToCut.empty()) { /*Temos clientes na fila, acorda o dorminhoco.*/
             barberSleeping = false;
-            isSleep.notify_one();
+            isBarberSleeping.notify_one();
         }
     }
 
@@ -59,7 +59,7 @@ public:
         while (clientsWaiting == 0) { 
             barberSleeping = true;
             cout << "Barbeiro: não há clientes, irei tirar um cochilo. " << endl;
-            isSleep.wait(lck); 
+            isBarberSleeping.wait(lck); 
         }
         
         int id = waitingToCut.front();
